@@ -1,5 +1,7 @@
 import modal
 
+image = modal.Image.debian_slim().add_local_dir("SVF", remote_path="/root/SVF").apt_install(["cmake", "gcc", "g++", "libtinfo5", "libz-dev", "libzstd-dev", "zip", "wget", "libncurses5-dev"]).pip_install("numpy")
+
 app = modal.App("example-get-started")
 
 
