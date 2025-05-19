@@ -9,7 +9,7 @@ def read_c_code(file_path):
 
 def main():
     # Read the C code from the file
-    c_code = read_c_code('./gatmodalfiles/trial.c')
+    c_code = read_c_code('./trial.c')
     
     # Prepare the request data
     data = {
