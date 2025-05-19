@@ -15,13 +15,17 @@ def main():
     data = {
         "c_code": c_code
     }
+     
+    headers={
+        "Content-Type": "application/json"
+    }
     
     # Send the request
     try:
         response = requests.post(
-            "https://vishnugrao--c-code-analyzer-orchestrator-dev.modal.run",
+            "https://vishnugrao--c-code-analyzer-orchestrator.modal.run",
             json=data,
-            headers={"Content-Type": "application/json"}
+            headers=headers
         )
         
         # Check if the request was successful

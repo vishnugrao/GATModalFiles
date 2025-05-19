@@ -371,7 +371,7 @@ def orchestrator(request: CCodeRequest) -> VulnerabilityResponse:
         with modal.enable_output():
             # Step 1: Compile the C code
             compile_response = requests.post(
-                "https://vishnugrao--c-code-analyzer-compile-c-code-dev.modal.run",
+                "https://vishnugrao--c-code-analyzer-compile-c-code.modal.run",
                 json={"c_code": request.c_code}
             )
             compile_response.raise_for_status()
@@ -379,7 +379,7 @@ def orchestrator(request: CCodeRequest) -> VulnerabilityResponse:
             
             # Step 2: Extract bitcode
             extract_response = requests.post(
-                "https://vishnugrao--c-code-analyzer-extract-bitcode-dev.modal.run",
+                "https://vishnugrao--c-code-analyzer-extract-bitcode.modal.run",
                 json={"compiled_binary": compiled_binary}
             )
             extract_response.raise_for_status()
@@ -387,7 +387,7 @@ def orchestrator(request: CCodeRequest) -> VulnerabilityResponse:
             
             # Step 3: Run WPA analysis
             wpa_response = requests.post(
-                "https://vishnugrao--c-code-analyzer-run-wpa-analysis-dev.modal.run",
+                "https://vishnugrao--c-code-analyzer-run-wpa-analysis.modal.run",
                 json={"bc_content": bc_content}
             )
             wpa_response.raise_for_status()
@@ -395,7 +395,7 @@ def orchestrator(request: CCodeRequest) -> VulnerabilityResponse:
             
             # Step 4: Predict vulnerability
             predict_response = requests.post(
-                "https://vishnugrao--c-code-analyzer-predict-vulnerability-dev.modal.run",
+                "https://vishnugrao--c-code-analyzer-predict-vulnerability.modal.run",
                 json={"dot_content": dot_content}
             )
             predict_response.raise_for_status()
