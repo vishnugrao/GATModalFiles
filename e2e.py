@@ -6,19 +6,21 @@ import numpy as np
 import re
 from torch.serialization import add_safe_globals
 from lsh_graph_classifier import GraphEncoder, LSHGraphClassifier
+import os
 
 # Add safe globals for numpy
 add_safe_globals(['numpy.core.multiarray.scalar'])
 
 def load_models():
+    """Load the trained models and embeddings."""
     # Load saved LSH classifier
-    saved_data = torch.load('lsh_classifier.pt', map_location=torch.device('cpu'), weights_only=False)
+    saved_data = torch.load('/root/lsh_classifier.pt', map_location=torch.device('cpu'), weights_only=False)
     
     # Load Word2Vec model
-    word2vec_model = Word2Vec.load("embeddings_output/juliet_medium_node_embeddings.model")
+    word2vec_model = Word2Vec.load("/root/embeddings_output/juliet_medium_node_embeddings.model")
     
     # Load TransE embeddings
-    transe_data = torch.load('instruction_embeddings.pt', map_location=torch.device('cpu'), weights_only=False)
+    transe_data = torch.load('/root/instruction_embeddings.pt', map_location=torch.device('cpu'), weights_only=False)
     transe_embeddings = transe_data['final_embeddings']
     instruction_triplets = transe_data['instruction_triplets']
     
@@ -31,6 +33,7 @@ def load_models():
     return saved_data, word2vec_model, instruction_to_embedding
 
 def create_node_embeddings(nodes, word2vec_model, instruction_to_embedding):
+    """Create embeddings for each node in the graph."""
     node_embeddings = {}
     
     for node, (node_type, node_id, raw_instruction) in nodes:
@@ -62,6 +65,7 @@ def create_node_embeddings(nodes, word2vec_model, instruction_to_embedding):
     return node_embeddings
 
 def create_graph_data(dot_file, node_embeddings):
+    """Create PyTorch Geometric Data object from dot file."""
     # Read dot file
     with open(dot_file, 'r') as f:
         content = f.read()
@@ -104,6 +108,7 @@ def create_graph_data(dot_file, node_embeddings):
     return data
 
 def predict_vulnerability(dot_file):
+    """Predict vulnerability from dot file."""
     # Load models
     saved_data, word2vec_model, instruction_to_embedding = load_models()
     
