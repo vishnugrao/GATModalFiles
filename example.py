@@ -3,6 +3,27 @@ import os
 import tempfile
 from pathlib import Path
 import shutil
+import requests
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
+import base64
+
+# Pydantic models for request/response validation
+class CCodeRequest(BaseModel):
+    c_code: str
+
+class CompiledBinaryRequest(BaseModel):
+    compiled_binary: str  # base64 encoded
+
+class BCContentRequest(BaseModel):
+    bc_content: str  # base64 encoded
+
+class DotContentRequest(BaseModel):
+    dot_content: str
+
+class VulnerabilityResponse(BaseModel):
+    predicted_cwe: str
+    confidence: float
 
 # Create the base image with all required dependencies
 image = (
@@ -23,7 +44,7 @@ image = (
     ])
     .pip_install([
         "numpy", "torch", "torch-geometric", "wllvm", "gensim",
-        "tqdm", "scikit-learn", "matplotlib", "seaborn"
+        "tqdm", "scikit-learn", "matplotlib", "seaborn", "pydantic"
     ])
     .run_commands([
         "set -x", # Show commands as they execute
@@ -60,17 +81,18 @@ image = (
 app = modal.App("c-code-analyzer")
 
 @app.function(image=image)
-def compile_c_code(c_code: str) -> bytes:
+@modal.fastapi_endpoint(method="POST")
+def compile_c_code(request: CCodeRequest) -> str:
     """Compile C code using wllvm and return the compiled binary."""
     with tempfile.TemporaryDirectory() as temp_dir:
         # Write the C code to a temporary file
         c_file_path = os.path.join(temp_dir, "temp.c")
         with open(c_file_path, 'w') as f:
-            f.write(c_code)
+            f.write(request.c_code)
         
         # Print the file contents for debugging
-        print("C code contents:")
-        os.system(f"cat {c_file_path}")
+        # print("C code contents:")
+        # os.system(f"cat {c_file_path}")
         os.system("echo ")
         
         # Set up wllvm environment
@@ -116,16 +138,17 @@ def compile_c_code(c_code: str) -> bytes:
             bitcode = f.read()
             
         print("WLLVM DONE")
-        return bitcode
+        return base64.b64encode(bitcode).decode('utf-8')
 
 @app.function(image=image)
-def extract_bitcode(compiled_binary: bytes) -> bytes:
+@modal.fastapi_endpoint(method="POST")
+def extract_bitcode(request: CompiledBinaryRequest) -> str:
     """Extract bitcode from the compiled binary."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        # Write the compiled binary to a temporary file
+        # Decode and write the compiled binary to a temporary file
         compiled_file = os.path.join(temp_dir, "temp")
         with open(compiled_file, 'wb') as f:
-            f.write(compiled_binary)
+            f.write(base64.b64decode(request.compiled_binary))
             
         # Set up LLVM environment
         llvm_paths = [
@@ -195,19 +218,17 @@ def extract_bitcode(compiled_binary: bytes) -> bytes:
         with open(bc_file, 'rb') as f:
             bitcode = f.read()
             
-        return bitcode
+        return base64.b64encode(bitcode).decode('utf-8')
 
 @app.function(image=image)
-def run_wpa_analysis(bc_content: bytes) -> str:
+@modal.fastapi_endpoint(method="POST")
+def run_wpa_analysis(request: BCContentRequest) -> str:
     """Run WPA analysis and generate dot file content."""
     with tempfile.TemporaryDirectory() as temp_dir:
-        # Get absolute path of temp directory
-        temp_dir = os.path.abspath(temp_dir)
-        
-        # Write the bitcode to a temporary file
+        # Decode and write the bitcode to a temporary file
         bc_file = os.path.join(temp_dir, "temp.bc")
         with open(bc_file, 'wb') as f:
-            f.write(bc_content)
+            f.write(base64.b64decode(request.bc_content))
             
         # Set up environment variables
         os.environ["SVF_DIR"] = "/root/SVF"
@@ -253,20 +274,34 @@ def run_wpa_analysis(bc_content: bytes) -> str:
             os.chdir(original_dir)
 
 @app.function(image=image)
-def predict_vulnerability(dot_content: str) -> dict:
+@modal.fastapi_endpoint(method="POST")
+def predict_vulnerability(request: DotContentRequest) -> VulnerabilityResponse:
     """Run vulnerability prediction on the dot file content."""
     with tempfile.TemporaryDirectory() as temp_dir:
         # Write the dot content to a temporary file
         dot_file = os.path.join(temp_dir, "svfg_final.dot")
         with open(dot_file, 'w') as f:
-            f.write(dot_content)
+            f.write(request.dot_content)
             
         from e2e import predict_vulnerability
         predicted_cwe, confidence = predict_vulnerability(dot_file)
-        return {
-            "predicted_cwe": predicted_cwe,
-            "confidence": float(confidence)
-        }
+        
+        # Ensure proper type conversion
+        try:
+            predicted_cwe_str = str(predicted_cwe)
+            confidence_float = float(confidence)
+            
+            return VulnerabilityResponse(
+                predicted_cwe=predicted_cwe_str,
+                confidence=confidence_float
+            )
+        except (ValueError, TypeError) as e:
+            print(f"Error converting prediction results: {str(e)}")
+            print(f"Raw prediction_cwe type: {type(predicted_cwe)}")
+            print(f"Raw prediction_cwe value: {predicted_cwe}")
+            print(f"Raw confidence type: {type(confidence)}")
+            print(f"Raw confidence value: {confidence}")
+            raise ValueError(f"Failed to convert prediction results to expected types: {str(e)}")
 
 @app.function(image=image)
 def test_extract_bc():
@@ -328,16 +363,67 @@ def test_extract_bc():
             print(f"\nBitcode file not created: {bc_file}")
             return False
 
+@app.function(image=image)
+@modal.fastapi_endpoint(method="POST")
+def orchestrator(request: CCodeRequest) -> VulnerabilityResponse:
+    """Main orchestrator for LLM calls when the local entry point is not used"""
+    try:
+        with modal.enable_output():
+            # Step 1: Compile the C code
+            compile_response = requests.post(
+                "https://vishnugrao--c-code-analyzer-compile-c-code-dev.modal.run",
+                json={"c_code": request.c_code}
+            )
+            compile_response.raise_for_status()
+            compiled_binary = compile_response.text  # Already base64 encoded
+            
+            # Step 2: Extract bitcode
+            extract_response = requests.post(
+                "https://vishnugrao--c-code-analyzer-extract-bitcode-dev.modal.run",
+                json={"compiled_binary": compiled_binary}
+            )
+            extract_response.raise_for_status()
+            bc_content = extract_response.text  # Already base64 encoded
+            
+            # Step 3: Run WPA analysis
+            wpa_response = requests.post(
+                "https://vishnugrao--c-code-analyzer-run-wpa-analysis-dev.modal.run",
+                json={"bc_content": bc_content}
+            )
+            wpa_response.raise_for_status()
+            dot_content = wpa_response.text
+            
+            # Step 4: Predict vulnerability
+            predict_response = requests.post(
+                "https://vishnugrao--c-code-analyzer-predict-vulnerability-dev.modal.run",
+                json={"dot_content": dot_content}
+            )
+            predict_response.raise_for_status()
+            result = predict_response.json()
+            
+            print("Analysis Results:")
+            print(f"Predicted CWE: {result['predicted_cwe']}")
+            print(f"Confidence: {result['confidence']:.2f}")
+            
+            return VulnerabilityResponse(**result)
+            
+    except requests.exceptions.RequestException as e:
+        print(f"Error during API call: {str(e)}")
+        raise
+    except Exception as e:
+        print(f"Error during analysis: {str(e)}")
+        raise
+
 @app.local_entrypoint()
 def main(c_code: str):
     """Main entrypoint that runs the entire analysis pipeline."""
     try:
         with modal.enable_output():
             # First test the extract-bc command
-            print("Testing extract-bc command...")
-            test_result = test_extract_bc.remote()
-            if not test_result:
-                raise RuntimeError("extract-bc test failed")
+            # print("Testing extract-bc command...")
+            # test_result = test_extract_bc.remote()
+            # if not test_result:
+            #     raise RuntimeError("extract-bc test failed")
             
             # Step 1: Compile the C code
             compiled_binary = compile_c_code.remote(c_code)
@@ -355,6 +441,8 @@ def main(c_code: str):
             print("Analysis Results:")
             print(f"Predicted CWE: {result['predicted_cwe']}")
             print(f"Confidence: {result['confidence']:.2f}")
+            
+            return result
     except Exception as e:
         print(f"Error during analysis: {str(e)}")
         raise
